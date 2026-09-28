@@ -162,7 +162,7 @@ logger.info("共 %d 个事件", n)
 
 参考实现：`study/smoke_internal.py`（已经是 logger 版，可用 `AS_LOG_LEVEL=DEBUG` 覆盖级别）。
 
-一次成功的回复长这样（实测 48 事件 / 2 轮循环 / 1 次 Glob，此处省略时间戳前缀）：
+一次成功的回复长这样（**两次实测分别为 48 / 332 个事件**，差异全部落在 `ThinkingBlockDeltaEvent` 上 —— 推理长度不固定；结构始终是 2 轮循环 + 1 次 Glob。此处省略时间戳前缀）：
 
 ```text
 INFO | smoke_internal:main:62 - [001] ReplyStartEvent
@@ -176,8 +176,11 @@ INFO | smoke_internal:main:62 - [048] ReplyEndEvent           ← Msg 终结流
 INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
 ```
 
-**两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，
-前端不用自己收尾。
+**两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，前端不用自己收尾。
+
+> ⚠️ **事件总数不是常量**：它随模型的思考长度变化（同一 prompt 两次实测为 48 与 332）。
+> 可依赖的是**结构** —— 轮次、块级事件的成对性、工具调用事件的位置 —— 而不是条数。
+> 任何按「第 N 个事件」写死的消费逻辑都会碎。
 
 ## 1.6 踩坑清单（都是实际撞到的）
 
