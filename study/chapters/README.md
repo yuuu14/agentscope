@@ -12,7 +12,7 @@
 - `agentscope-study-map.md` —— 仓库测绘与阅读顺序
 - `agentscope-reply-impl.md` —— `_reply_impl` 逐段精读
 - `agentscope-hgt2-onboarding.md` —— 7 课时课程 + examples 全景对照
-- `agentscope-agent-flow.html` —— Agent 执行流程图（源文件，可直接用浏览器打开）
+- `images/agentscope-agent-flow.html` —— Agent 执行流程图（矢量源；PNG 由 `render-flow.sh` 生成）
 - `smoke_internal.py` —— 打全事件流的冒烟脚本（内网端点）
 
 ## 尚未成章（计划）
