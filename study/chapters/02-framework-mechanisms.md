@@ -34,6 +34,10 @@
 
 ## 2.3 主循环：一个三态机
 
+![AgentScope Agent 执行流程](../agentscope-agent-flow.png)
+
+> 图源 `agentscope-agent-flow.html`（矢量，浏览器直接打开）；改图后跑 `study/render-flow.sh` 重新导出 PNG。
+
 ```
 reply_stream()  :288   ← 过滤掉 Msg，只吐事件
   └ reply()     :332   ← 消费整条流，取最后一个 Msg
