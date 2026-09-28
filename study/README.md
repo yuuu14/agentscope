@@ -12,10 +12,20 @@
 
 ## 脚本
 
-- `smoke_glm.py` —— 跑一次 `reply_stream` 并打印**全部 AgentEvent**（学事件系统的原始素材）。
-  端点/模型由 `AS_BASE_URL` / `AS_MODEL` 控制。
-- `console_openai.py` —— 通用 **OpenAI 兼容** console（把 `examples/console/main.py` 的 DashScope 换掉）。
-  读 `AGENTSCOPE_TOKEN` / `AGENTSCOPE_BASE_URL` / `AGENTSCOPE_MODEL`。
+| 脚本 | 用途 |
+|---|---|
+| `console_internal.py` | **交互式终端 console**（参照 `examples/console/main.py`），改用内网模型；含 workspace 文件工具、技能、长期记忆、offloader |
+| `smoke_internal.py` | 跑一次 `reply_stream`，把**事件内容**按单行 JSON 打日志（观测 / 学事件系统用） |
+| `smoke_glm.py` | 同上，但默认外网 GLM 端点 |
+| `console_openai.py` | 通用 OpenAI 兼容 console（token 需自行提供） |
+
+全部**开箱即用**：不需要 export 环境变量 —— 鉴权默认从 `_config/.auth` 读、
+`trust_env=False` 兜住代理、解释器会自动切到仓库自带 `.venv`。
+
+## 图表
+
+- `images/agentscope-agent-flow.html` —— Agent 执行流程图（矢量源）
+- `images/agentscope-agent-flow.png` —— 由 `render-flow.sh` 生成，第 2 章引用
 
 ```bash
 cd /Users/elias/Developer/yuuu14/agentscope

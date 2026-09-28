@@ -14,6 +14,7 @@
 - `agentscope-hgt2-onboarding.md` —— 7 课时课程 + examples 全景对照
 - `images/agentscope-agent-flow.html` —— Agent 执行流程图（矢量源；PNG 由 `render-flow.sh` 生成）
 - `smoke_internal.py` —— 打全事件流的冒烟脚本（内网端点）
+- `console_internal.py` —— 交互式终端 console（内网端点，开箱即用）
 
 ## 尚未成章（计划）
 

@@ -98,6 +98,8 @@ AS_TK=$(grep '^GPU_WRAP_SERVER_API_KEY_TEST=' \
 | 自己消费事件流 | `async for evt in agent.reply_stream(msg)` | 前端 / 观测 / 审计用它 |
 | 终端里人工试 | `await launch_console(agent)` | 内置流式渲染、工具确认、Ctrl+C 中断 |
 
+现成可跑的例子：`study/console_internal.py`（内网端点、开箱即用）。
+
 ```python
 from agentscope.console import ConsoleRenderer
 
