@@ -249,7 +249,9 @@ AS_LOG_FULL=1 python3 study/smoke_internal.py   # 连原始 delta 一起打
 > 1. `ReplyStartEvent` 一定第一个，`ReplyEndEvent` 一定最后一个；
 > 2. 块级事件严格成对：`*Start` → `*Delta*` → `*End`；
 > 3. 工具调用/结果事件排在所属那轮的 `ModelCallStart…ModelCallEnd` 之内或之后；
-> 4. `HintBlockEvent` 出现在工具结果之后、下一轮模型调用之前（工具结果回灌的标记）。
+> 4. `HintBlockEvent` 是**运行时状态注入**（时间 / 任务 / 上下文余量 / 工具连续失败），
+>    由 `_inject_runtime_state` 在每轮推理前发出 —— 因此总在 `ModelCallStart` 之前，
+>    且是**无 delta 的一次性事件**（全文一次到齐）。
 >
 > **任何按「第 N 个事件」或「事件总数」写死的消费逻辑都会碎。**
 > 另外：**prompt 写得越含糊，模型试探次数越多、事件数越不可控** —— 这也是一条实测结论。
