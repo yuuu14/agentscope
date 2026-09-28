@@ -34,9 +34,9 @@
 
 ## 2.3 主循环：一个三态机
 
-![AgentScope Agent 执行流程](../agentscope-agent-flow.png)
+![AgentScope Agent 执行流程](../images/agentscope-agent-flow.png)
 
-> 图源 `agentscope-agent-flow.html`（矢量，浏览器直接打开）；改图后跑 `study/render-flow.sh` 重新导出 PNG。
+> 图源 `study/images/agentscope-agent-flow.html`（矢量，浏览器直接打开）；改图后跑 `study/render-flow.sh` 重新导出 PNG。
 
 ```
 reply_stream()  :288   ← 过滤掉 Msg，只吐事件
