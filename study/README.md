@@ -67,16 +67,39 @@ pnpm install --registry https://registry.npmmirror.com
 pnpm --filter frontend exec vite --host 127.0.0.1 --port 5173
 
 # 4) 浏览器打开 5173 → /setup 填服务地址 http://127.0.0.1:8000
-#    → Credential 页新建「OpenAI 兼容」凭据 → 建会话开始聊天
+#    → Credential 页新建凭据（类型见下，**不是 OpenAI**）→ 建会话开始聊天
 ```
 
 凭据参数：
 
 | 项 | 值 |
 |---|---|
+| **凭据类型** | **DeepSeek API**（`deepseek_credential`）← 关键 |
 | base_url | `http://10.48.3.23:48080/gpu-wrap-server` |
 | 模型 | `deepseek-v4-flash` |
 | 密钥 | 见 `_config/.auth` 的 `GPU_WRAP_SERVER_API_KEY_TEST`（脚本不打印密钥） |
+
+### ⚠️ 为什么不能用「OpenAI 兼容」凭据
+
+UI 的「available models」不是从 base_url 动态拉的，而是按 **凭据类型 → 模型类 →
+该类的 `_models/*.yaml`** 取：
+
+- `openai_credential` → `OpenAIChatModel` → `model/_openai_chat/_models/`，
+  里面只有 14 张 gpt / o 系列的卡 → **看不到 deepseek，也没法手填**；
+- `deepseek_credential` → `DeepSeekChatModel` → `model/_deepseek/_models/`，
+  **已经带了 `deepseek-v4-flash.yaml`**，且 `DeepSeekCredential.base_url` 可改
+  （`_deepseek.py` 默认 `https://api.deepseek.com`，改为内网网关即可）。
+
+模型类内部走 `openai.AsyncClient(base_url=self.credential.base_url, **client_kwargs)`
+（`model/_deepseek/_model.py:132-135`），所以内网地址与 `trust_env=False` 都能带进去。
+
+实测（`deepseek_credential` + 内网 base_url）：
+
+```
+可选模型: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash',
+           'deepseek-chat', 'deepseek-reasoner']
+一次调用答复: 通了通了
+```
 
 实测：最小服务启动成功，67 条路由（`/credential`、`/chat`、`/agent`、`/health` …），
 CORS 预检返回 `access-control-allow-origin: *`。
