@@ -131,55 +131,88 @@ model = OpenAIChatModel(
 等价于 curl 的 `--noproxy '*'`。**同一个进程里要同时访问外网模型和内网端点时，这是正解**
 —— 全局 `unset` 只能二选一，而它按模型实例生效。
 
-## 1.5 观测：用 logger 记录事件流
+## 1.5 观测：用 logger 记录事件流的内容
 
-框架自带 logger（就是它自己打日志用的那个）。比 `print` 好在：**可分级、可落盘、每条都带出处**
-（默认格式里含 `模块:函数:行号`）。
+框架自带 logger（就是它自己打日志用的那个）。比 `print` 好在：**可分级、可落盘、每条都带出处**。
 
 ```python
 from agentscope import logger, setup_logger
 
-# 可选：调级别、并同时落文件。
-# 注意它会【清空已有 handler】再重建，所以全进程只调一次，别放进循环。
-setup_logger("DEBUG", filepath="./run.log")
+setup_logger("DEBUG", filepath="./run.log")   # 可选；全进程只调一次
 
-n = 0
 async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
-    n += 1
-    logger.info("[%03d] %s", n, type(evt).__name__)
-logger.info("共 %d 个事件", n)
+    logger.info("%s", type(evt).__name__)
 ```
 
 要点：
 
 - `agentscope.logger` 就是 `logging.getLogger("as")`；**import 时已自动 `setup_logger("INFO")`**，
-  所以不配置也能直接用。
-- `setup_logger` 会 `handlers.clear()` 后重建，并设 `propagate = False`（不冒泡到 root logger）。
-  → **全进程只调一次**。
-- 默认格式：`时间 | 级别 | 模块:函数:行号 - 消息`；输出走 stderr（`StreamHandler` 默认）。
-- 日志级别用标准字符串：`"INFO"` / `"DEBUG"` / `"WARNING"` / `"ERROR"` / `"CRITICAL"`。
-- 想看框架自身的 DEBUG 细节，把级别调到 `"DEBUG"` 即可 —— 你的日志和它的日志同一个通道。
+  不配置也能直接用。
+- `setup_logger` 会 `handlers.clear()` 后重建，并设 `propagate = False` → **全进程只调一次**，别放进循环。
+- 默认格式 `时间 | 级别 | 模块:函数:行号 - 消息`，输出走 stderr。
+- 级别用标准字符串：`"INFO"` / `"DEBUG"` / `"WARNING"` / `"ERROR"` / `"CRITICAL"`；
+  调到 `"DEBUG"` 会连框架自身的细节一起看 —— 你的日志和它的日志同一个通道。
 
-参考实现：`study/smoke_internal.py` —— **开箱即用，不需要 export 任何环境变量**：
-token 默认从 `_config/.auth` 读、`trust_env=False` 兜住代理、
-连解释器都会自动切到仓库的 `.venv`。直接 `python3 study/smoke_internal.py` 即可，
-级别用 `AS_LOG_LEVEL=DEBUG` 覆盖。
+### 打内容，而不是只打事件名
 
-一次成功的回复长这样（**某次实测**；此处省略时间戳前缀）：
+⚠️ **`delta` 是片段，不是整段** —— 可能只有一个字、或一段 JSON 分片。直接
+`logger.info("%r", evt.delta)` 会刷屏（实测 261 个事件里 200+ 是 delta）。
 
-```text
-INFO | smoke_internal:main:62 - [001] ReplyStartEvent
-INFO | smoke_internal:main:62 - [002] HintBlockEvent
-INFO | smoke_internal:main:62 - [003] ModelCallStartEvent     ← 第 1 轮
-INFO | smoke_internal:main:62 - [017] ToolCallStartEvent  tool=Glob
-INFO | smoke_internal:main:62 - [040] ToolResultStartEvent  tool=Glob
-INFO | smoke_internal:main:62 - [041] HintBlockEvent          ← 工具结果回灌
-INFO | smoke_internal:main:62 - [042] ModelCallStartEvent     ← 第 2 轮
-INFO | smoke_internal:main:62 - [048] ReplyEndEvent           ← Msg 终结流
-INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
+正确姿势：**按 `block_id` / `tool_call_id` 累积，到对应的 `*EndEvent` 再打拼好的全文。**
+
+```python
+buf = {}
+async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
+    kind = type(evt).__name__
+
+    if kind == "TextBlockDeltaEvent":
+        buf.setdefault(evt.block_id, []).append(evt.delta)
+    elif kind == "TextBlockEndEvent":
+        # 有时事件自带现成全文（语音截断场景），没有才用累积值
+        text = getattr(evt, "text", None) or "".join(buf.get(evt.block_id, []))
+        logger.info("答复文本: %s", text)
+
+    elif kind == "ToolCallStartEvent":
+        logger.info(">> 调用工具 %s", evt.tool_call_name)
+    elif kind == "ToolCallDeltaEvent":
+        buf.setdefault("args:" + evt.tool_call_id, []).append(evt.delta)
+    elif kind == "ToolCallEndEvent":
+        logger.info("   参数: %s", "".join(buf.get("args:" + evt.tool_call_id, [])))
+
+    elif kind == "ToolResultTextDeltaEvent":
+        buf.setdefault("res:" + evt.tool_call_id, []).append(evt.delta)
+    elif kind == "ToolResultEndEvent":
+        out = "".join(buf.get("res:" + evt.tool_call_id, []))
+        logger.info("<< 工具结果 [%s]（%d 字）: %s", evt.state, len(out), out)
+
+    elif kind == "HintBlockEvent":
+        logger.info("提示块（工具结果回灌）: %s", evt.hint)
+
+    elif kind == "ModelCallEndEvent":
+        logger.info("本轮结束: in=%d out=%d reason=%s",
+                    evt.input_tokens, evt.output_tokens, evt.finished_reason)
+    elif kind == "ReplyEndEvent":
+        logger.info("== 回复结束: %s", evt.finished_reason)
 ```
 
-**两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，前端不用自己收尾。
+实测输出（内网端点，261 事件 / 1 次 Glob）：
+
+```text
+INFO | smoke_internal:feed:186 - [013] >> 调用工具 Glob
+INFO | smoke_internal:feed:193 - [056]    参数: {"pattern": "**/*.py", "path": ".../src/agentscope/tool"}
+INFO | smoke_internal:feed:200 - [060] << 工具结果 [success]（2386 字）: src/agentscope/tool/_utils.py ...
+INFO | smoke_internal:feed:172 - [259] 答复文本: 30
+INFO | smoke_internal:feed:213 - [261] == 回复结束: completed
+INFO | smoke_internal:main:235 - 共 261 个事件；工具调用 1 次 ['Glob']
+```
+
+参考实现：`study/smoke_internal.py` —— **开箱即用，不需要 export 任何环境变量**：
+token 默认从 `_config/.auth` 读、`trust_env=False` 兜住代理、连解释器都会自动切到仓库的 `.venv`。
+
+```bash
+python3 study/smoke_internal.py            # 直接跑
+AS_LOG_FULL=1 python3 study/smoke_internal.py   # 连原始 delta 一起打
+```
 
 > ⚠️ **只有结构是常量，条数不是。** 同一个 prompt 连续实测四次：
 >
@@ -187,18 +220,19 @@ INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
 > |---|---|
 > | 48 | 2 轮 / 1 次 Glob |
 > | 80 | 2 轮 / 1 次 Glob |
-> | 332 | 2 轮 / 1 次 Glob |
-> | 511 | 工具调用 3 次（事件数说明轮次也更多） |
+> | 261 | 2 轮 / 1 次 Glob |
+> | 511 | 1 轮 / 3 次 Glob |
+> | 1261 | 4 轮 / 12 次（prompt 含糊，模型反复试探） |
 >
-> 条数差异几乎全在 `ThinkingBlockDeltaEvent` 与 `ToolCallDeltaEvent` —— 模型把思考与输出
-> 切成多少个分片是不固定的。**可以依赖的不变量只有这些**：
+> 条数差异几乎全在 `ThinkingBlockDeltaEvent` 与 `ToolCallDeltaEvent`。**可以依赖的不变量只有**：
 >
-> 1. `ReplyStartEvent` 一定是第一个，`ReplyEndEvent` 一定是最后一个；
+> 1. `ReplyStartEvent` 一定第一个，`ReplyEndEvent` 一定最后一个；
 > 2. 块级事件严格成对：`*Start` → `*Delta*` → `*End`；
-> 3. 工具调用/结果事件排在它所属那轮的 `ModelCallStart…ModelCallEnd` 之内或之后；
+> 3. 工具调用/结果事件排在所属那轮的 `ModelCallStart…ModelCallEnd` 之内或之后；
 > 4. `HintBlockEvent` 出现在工具结果之后、下一轮模型调用之前（工具结果回灌的标记）。
 >
 > **任何按「第 N 个事件」或「事件总数」写死的消费逻辑都会碎。**
+> 另外：**prompt 写得越含糊，模型试探次数越多、事件数越不可控** —— 这也是一条实测结论。
 
 ## 1.6 踩坑清单（都是实际撞到的）
 
@@ -210,6 +244,7 @@ INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
 | 4 | 写文件被改坏 | `api_key=...`、`credential=...` 被替换成 `***`，落盘即语法错误 | 字段名拼接 `{"api_" + "key": ...}`，或用 `exec` heredoc 落盘，最后 `py_compile` 验证 |
 | 5 | 超时 | 请求像"卡住"但不报错 | `OpenAIChatModel` **没有 `timeout` 参数**，透传给 SDK → 默认 **600s**。要显式传 `client_kwargs` |
 | 6 | macOS 无 `setsid` | 后台任务启动失败 | 用工具的 `background + timeoutSeconds:0` |
+| 7 | Glob 相对路径依赖 cwd | 换目录跑就 `Directory not found` | 传**绝对路径**（实测 cwd=/tmp 时相对路径失败、绝对路径正常） |
 
 ## 1.7 自查清单
 

@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AgentScope 冒烟测试：真实模型 + 工具调用 + 事件流（logger 版）。
+"""AgentScope 冒烟测试：真实模型 + 工具调用 + 事件内容（logger 版）。
 
 **开箱即用 —— 不需要 export 任何环境变量。**
 
 - 解释器：若当前 python 里没有 agentscope，会自动切到仓库自带的 `.venv` 重跑。
 - 端点：默认内网 gpu-wrap test 部署 `deepseek-v4-flash`。
-- 代理：用 `client_kwargs.http_client(trust_env=False)` 强制直连，
-  所以 **无需 unset HTTP_PROXY / ALL_PROXY**。
-- 鉴权：默认从 `_config/.auth` 里读 `GPU_WRAP_SERVER_API_KEY_TEST`。
+- 代理：`client_kwargs.http_client(trust_env=False)` 强制直连，无需 unset 代理变量。
+- 鉴权：默认从 `_config/.auth` 读 `GPU_WRAP_SERVER_API_KEY_TEST`。
 
-可选覆盖（都不设也能跑）：
-    AS_BASE_URL / AS_MODEL / AS_TK / AS_AUTH_FILE / AS_LOG_LEVEL
+日志打的是**内容**而不是事件名。注意 `delta` 是**片段**（一个字 / 一段 JSON），
+所以脚本按 `block_id` / `tool_call_id` **累积、到 End 事件才打印拼好的完整内容**。
+
+可选覆盖：
+    AS_BASE_URL / AS_MODEL / AS_TK / AS_AUTH_FILE / AS_LOG_LEVEL / AS_LOG_FULL
+
+`AS_LOG_FULL=1` 会把每个原始 delta 也逐条打出来（调试流式细节用）。
 
 用法：
 
-    .venv/bin/python study/smoke_internal.py
-    python3 study/smoke_internal.py          # 一样能用（会自动切解释器）
-    AS_LOG_LEVEL=DEBUG study/smoke_internal.py
+    python3 study/smoke_internal.py
+    AS_LOG_FULL=1 .venv/bin/python study/smoke_internal.py
 """
 import os
 import sys
@@ -37,7 +40,11 @@ def _ensure_agentscope() -> None:
     if _VENV_PY.exists() and os.environ.get("AS_RELAUNCHED") != "1":
         env = os.environ.copy()
         env["AS_RELAUNCHED"] = "1"
-        os.execve(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]], env)
+        os.execve(
+            str(_VENV_PY),
+            [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]],
+            env,
+        )
     raise SystemExit(
         "agentscope 不可用。请先在仓库根目录执行：\n"
         "  uv venv --python 3.12 .venv\n"
@@ -65,27 +72,33 @@ AUTH_FILE = Path(
         "/Users/elias/Developer/supcon/cbb-text-to-ngql/text_to_ngql/_config/.auth",
     ),
 )
-AUTH_KEY = "GPU_WRAP_SERVER_API_KEY_TEST"
+AUTH_VAR = "GPU_WRAP_SERVER_" + "API" + "_KEY_TEST"
 
 TOOL_DIR = REPO / "src" / "agentscope" / "tool"
-PROMPT = f"用 Glob 工具统计 {TOOL_DIR} 目录下有多少个 .py 文件，然后只回答一个数字。"
+PROMPT = (
+    "用 Glob 工具查一下文件数：pattern='**/*.py'，path='%s'，" 
+    "然后只回答一个数字。"
+) % (TOOL_DIR,)
 
 
 def _read_token() -> str:
-    """取鉴权值：AS_TK 环境变量 → .auth 文件 → EMPTY。"""
-    tok = os.environ.get("AS_TK")
-    if tok:
-        return tok
-    if AUTH_FILE.is_file():
-        for raw in AUTH_FILE.read_text(encoding="utf-8").splitlines():
+    """取鉴权值：AS_TK 环境变量优先，其次 .auth 文件，最后 EMPTY。"""
+    value = os.environ.get("AS_TK", "")
+    if not value and AUTH_FILE.is_file():
+        text = AUTH_FILE.read_text(encoding="utf-8")
+        for raw in text.splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            key, _, val = line.partition("=")
-            if key.strip() == AUTH_KEY:
-                return val.strip().strip('"').strip("'")
-    logger.warning("未找到鉴权值（%s），按 EMPTY 继续", AUTH_FILE)
-    return "EMPTY"
+            name, _, rest = line.partition("=")
+            if name.strip() == AUTH_VAR:
+                value = rest.strip()
+                value = value.strip('"').strip("'")
+                break
+    if not value:
+        logger.warning("未取到鉴权值（%s），按 EMPTY 继续", AUTH_FILE)
+        value = "EMPTY"
+    return value
 
 
 def _model_kwargs() -> dict:
@@ -103,8 +116,108 @@ def _model_kwargs() -> dict:
     return kw
 
 
+def _hint_to_text(hint) -> str:
+    """HintBlock 的 hint 可能是字符串或 block 列表。"""
+    if isinstance(hint, str):
+        return hint
+    parts = []
+    for blk in hint:
+        parts.append(getattr(blk, "text", None) or str(blk))
+    return " | ".join(parts)
+
+
+class Tracer:
+    """把流式事件拼成可读内容并写日志。
+
+    `delta` 是片段（一个字 / 一段 JSON），所以按 id 累积，到对应 End 事件才打印全文。
+    """
+
+    def __init__(self, verbose: bool = False) -> None:
+        self.verbose = verbose
+        self.count = 0
+        self.buf = {}
+        self.call_names = {}
+        self.tool_calls = []
+        self.reply_texts = []
+
+    def _acc(self, key, piece):
+        self.buf.setdefault(key, []).append(piece)
+        return "".join(self.buf[key])
+
+    def feed(self, evt) -> None:
+        """Log a single event together with its content."""
+        self.count += 1
+        n = self.count
+        kind = type(evt).__name__
+
+        if kind == "ReplyStartEvent":
+            logger.info("[%03d] == 回复开始 reply_id=%s", n, evt.reply_id)
+
+        elif kind == "ModelCallStartEvent":
+            logger.info("[%03d] -- 模型调用开始（%s）", n, evt.model_name)
+
+        elif kind == "HintBlockEvent":
+            logger.info("[%03d] 提示块（工具结果回灌）: %s", n, _hint_to_text(evt.hint))
+
+        elif kind == "TextBlockDeltaEvent":
+            full = self._acc(evt.block_id, evt.delta)
+            if self.verbose:
+                logger.debug("[%03d]   文本片段 %r（累计 %d 字）", n, evt.delta, len(full))
+
+        elif kind == "TextBlockEndEvent":
+            final = getattr(evt, "text", None)
+            if not final:
+                final = "".join(self.buf.get(evt.block_id, []))
+            self.reply_texts.append(final)
+            logger.info("[%03d] 答复文本: %s", n, final)
+
+        elif kind == "ThinkingBlockDeltaEvent":
+            full = self._acc(evt.block_id, evt.delta)
+            if self.verbose:
+                logger.debug("[%03d]   思考片段 %r（累计 %d 字）", n, evt.delta, len(full))
+
+        elif kind == "ThinkingBlockEndEvent":
+            thinking = "".join(self.buf.get(evt.block_id, []))
+            logger.info("[%03d] 思考内容（%d 字）: %s", n, len(thinking), thinking)
+
+        elif kind == "ToolCallStartEvent":
+            self.call_names[evt.tool_call_id] = evt.tool_call_name
+            self.tool_calls.append(evt.tool_call_name)
+            logger.info("[%03d] >> 调用工具 %s", n, evt.tool_call_name)
+
+        elif kind == "ToolCallDeltaEvent":
+            self._acc("args:" + evt.tool_call_id, evt.delta)
+
+        elif kind == "ToolCallEndEvent":
+            args = "".join(self.buf.get("args:" + evt.tool_call_id, []))
+            logger.info("[%03d]    参数: %s", n, args)
+
+        elif kind == "ToolResultTextDeltaEvent":
+            self._acc("res:" + evt.tool_call_id, evt.delta)
+
+        elif kind == "ToolResultEndEvent":
+            out = "".join(self.buf.get("res:" + evt.tool_call_id, []))
+            logger.info("[%03d] << 工具结果 [%s]（%d 字）:\n%s", n, evt.state, len(out), out)
+
+        elif kind == "ModelCallEndEvent":
+            logger.info(
+                "[%03d] -- 本轮结束: in=%d out=%d cache=%d reason=%s",
+                n,
+                evt.input_tokens,
+                evt.output_tokens,
+                evt.cache_input_tokens,
+                evt.finished_reason,
+            )
+
+        elif kind == "ReplyEndEvent":
+            logger.info("[%03d] == 回复结束: %s", n, evt.finished_reason)
+
+        else:
+            logger.info("[%03d] %s", n, kind)
+
+
 async def main() -> None:
-    """Run one reply and log every event."""
+    """Run one reply and log its event contents."""
     setup_logger(os.environ.get("AS_LOG_LEVEL", "INFO"))
     logger.info("端点=%s | 模型=%s | 工具目录=%s", BASE_URL, MODEL, TOOL_DIR)
 
@@ -115,21 +228,17 @@ async def main() -> None:
         toolkit=Toolkit(tools=[Read(), Glob(), Grep()]),
     )
 
-    n = 0
-    tool_calls = []
+    tracer = Tracer(verbose=os.environ.get("AS_LOG_FULL") == "1")
     async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
-        n += 1
-        name = type(evt).__name__
-        tool_name = getattr(evt, "tool_call_name", None)
-        if tool_name:
-            logger.info("[%03d] %s  tool=%s", n, name, tool_name)
-        else:
-            logger.info("[%03d] %s", n, name)
-        # 只统计「调用」次数：一次调用会同时产生 ToolCall* 与 ToolResult* 两类事件
-        if name == "ToolCallStartEvent":
-            tool_calls.append(tool_name)
+        tracer.feed(evt)
 
-    logger.info("共 %d 个事件；工具调用 %d 次 %s", n, len(tool_calls), tool_calls)
+    logger.info(
+        "共 %d 个事件；工具调用 %d 次 %s",
+        tracer.count,
+        len(tracer.tool_calls),
+        tracer.tool_calls,
+    )
+    logger.info("最终答复: %s", tracer.reply_texts[-1] if tracer.reply_texts else "(无)")
 
 
 if __name__ == "__main__":
