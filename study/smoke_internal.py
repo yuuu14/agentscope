@@ -22,6 +22,7 @@
     python3 study/smoke_internal.py
     AS_LOG_FULL=1 .venv/bin/python study/smoke_internal.py
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -117,13 +118,25 @@ def _model_kwargs() -> dict:
 
 
 def _hint_to_text(hint) -> str:
-    """HintBlock 的 hint 可能是字符串或 block 列表。"""
+    """HintBlock 的 hint 可能是字符串或 block 列表，统一成字符串。"""
     if isinstance(hint, str):
         return hint
     parts = []
     for blk in hint:
         parts.append(getattr(blk, "text", None) or str(blk))
     return " | ".join(parts)
+
+
+def _j(value) -> str:
+    """压成单行 JSON —— 换行转义成 \\n，保证「一条日志一行」。
+
+    直接把对象交给 json.dumps（dict 会被序列化成真 JSON，而不是 Python repr）；
+    只有不可序列化的对象才退回 str()。
+    """
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        return json.dumps(str(value), ensure_ascii=False)
 
 
 class Tracer:
@@ -157,7 +170,7 @@ class Tracer:
             logger.info("[%03d] -- 模型调用开始（%s）", n, evt.model_name)
 
         elif kind == "HintBlockEvent":
-            logger.info("[%03d] 提示块（工具结果回灌）: %s", n, _hint_to_text(evt.hint))
+            logger.info("[%03d] 提示块（工具结果回灌）%s", n, _j(_hint_to_text(evt.hint)))
 
         elif kind == "TextBlockDeltaEvent":
             full = self._acc(evt.block_id, evt.delta)
@@ -169,7 +182,7 @@ class Tracer:
             if not final:
                 final = "".join(self.buf.get(evt.block_id, []))
             self.reply_texts.append(final)
-            logger.info("[%03d] 答复文本: %s", n, final)
+            logger.info("[%03d] 答复文本 %s", n, _j(final))
 
         elif kind == "ThinkingBlockDeltaEvent":
             full = self._acc(evt.block_id, evt.delta)
@@ -178,7 +191,7 @@ class Tracer:
 
         elif kind == "ThinkingBlockEndEvent":
             thinking = "".join(self.buf.get(evt.block_id, []))
-            logger.info("[%03d] 思考内容（%d 字）: %s", n, len(thinking), thinking)
+            logger.info("[%03d] 思考内容 %s", n, _j({"chars": len(thinking), "thinking": thinking}))
 
         elif kind == "ToolCallStartEvent":
             self.call_names[evt.tool_call_id] = evt.tool_call_name
@@ -190,27 +203,29 @@ class Tracer:
 
         elif kind == "ToolCallEndEvent":
             args = "".join(self.buf.get("args:" + evt.tool_call_id, []))
-            logger.info("[%03d]    参数: %s", n, args)
+            logger.info("[%03d]    参数 %s", n, _j(args))
 
         elif kind == "ToolResultTextDeltaEvent":
             self._acc("res:" + evt.tool_call_id, evt.delta)
 
         elif kind == "ToolResultEndEvent":
             out = "".join(self.buf.get("res:" + evt.tool_call_id, []))
-            logger.info("[%03d] << 工具结果 [%s]（%d 字）:\n%s", n, evt.state, len(out), out)
+            logger.info("[%03d] << 工具结果 %s", n, _j({"state": str(evt.state), "chars": len(out), "output": out}))
 
         elif kind == "ModelCallEndEvent":
             logger.info(
-                "[%03d] -- 本轮结束: in=%d out=%d cache=%d reason=%s",
+                "[%03d] -- 本轮结束 %s",
                 n,
-                evt.input_tokens,
-                evt.output_tokens,
-                evt.cache_input_tokens,
-                evt.finished_reason,
+                _j({
+                    "in": evt.input_tokens,
+                    "out": evt.output_tokens,
+                    "cache": evt.cache_input_tokens,
+                    "reason": str(evt.finished_reason),
+                }),
             )
 
         elif kind == "ReplyEndEvent":
-            logger.info("[%03d] == 回复结束: %s", n, evt.finished_reason)
+            logger.info("[%03d] == 回复结束 %s", n, _j(str(evt.finished_reason)))
 
         else:
             logger.info("[%03d] %s", n, kind)
@@ -238,7 +253,7 @@ async def main() -> None:
         len(tracer.tool_calls),
         tracer.tool_calls,
     )
-    logger.info("最终答复: %s", tracer.reply_texts[-1] if tracer.reply_texts else "(无)")
+    logger.info("最终答复 %s", _j(tracer.reply_texts[-1] if tracer.reply_texts else ""))
 
 
 if __name__ == "__main__":

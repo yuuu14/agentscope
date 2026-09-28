@@ -161,6 +161,17 @@ async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
 正确姿势：**按 `block_id` / `tool_call_id` 累积，到对应的 `*EndEvent` 再打拼好的全文。**
 
 ```python
+import json
+
+
+def _j(value) -> str:
+    """压成单行 JSON：换行会被转义，保证「一条日志一行」。"""
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:                      # 不可序列化就退回 str
+        return json.dumps(str(value), ensure_ascii=False)
+
+
 buf = {}
 async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
     kind = type(evt).__name__
@@ -170,40 +181,47 @@ async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
     elif kind == "TextBlockEndEvent":
         # 有时事件自带现成全文（语音截断场景），没有才用累积值
         text = getattr(evt, "text", None) or "".join(buf.get(evt.block_id, []))
-        logger.info("答复文本: %s", text)
+        logger.info("答复文本 %s", _j(text))
 
     elif kind == "ToolCallStartEvent":
         logger.info(">> 调用工具 %s", evt.tool_call_name)
     elif kind == "ToolCallDeltaEvent":
         buf.setdefault("args:" + evt.tool_call_id, []).append(evt.delta)
     elif kind == "ToolCallEndEvent":
-        logger.info("   参数: %s", "".join(buf.get("args:" + evt.tool_call_id, [])))
+        logger.info("   参数 %s", _j("".join(buf.get("args:" + evt.tool_call_id, []))))
 
     elif kind == "ToolResultTextDeltaEvent":
         buf.setdefault("res:" + evt.tool_call_id, []).append(evt.delta)
     elif kind == "ToolResultEndEvent":
         out = "".join(buf.get("res:" + evt.tool_call_id, []))
-        logger.info("<< 工具结果 [%s]（%d 字）: %s", evt.state, len(out), out)
-
-    elif kind == "HintBlockEvent":
-        logger.info("提示块（工具结果回灌）: %s", evt.hint)
+        logger.info("<< 工具结果 %s",
+                    _j({"state": str(evt.state), "chars": len(out), "output": out}))
 
     elif kind == "ModelCallEndEvent":
-        logger.info("本轮结束: in=%d out=%d reason=%s",
-                    evt.input_tokens, evt.output_tokens, evt.finished_reason)
+        logger.info("本轮结束 %s",
+                    _j({"in": evt.input_tokens, "out": evt.output_tokens,
+                        "reason": str(evt.finished_reason)}))
+
     elif kind == "ReplyEndEvent":
-        logger.info("== 回复结束: %s", evt.finished_reason)
+        logger.info("== 回复结束 %s", _j(str(evt.finished_reason)))
 ```
 
-实测输出（内网端点，261 事件 / 1 次 Glob）：
+### 为什么一律 `json.dumps` 成单行
+
+工具结果、思考、提示块都是**多行原文**。直接 `logger.info("%s", out)` 会把一条日志打散成几十行，
+既刷屏又没法 `grep` / 结构化解析。`json.dumps` 把换行转义成 `\n` 并保留结构，
+**一条日志恰好一行**（实测校验：总行数 == INFO 记录数）。
+
+实测输出（内网端点；每行都是一条完整日志）：
 
 ```text
-INFO | smoke_internal:feed:186 - [013] >> 调用工具 Glob
-INFO | smoke_internal:feed:193 - [056]    参数: {"pattern": "**/*.py", "path": ".../src/agentscope/tool"}
-INFO | smoke_internal:feed:200 - [060] << 工具结果 [success]（2386 字）: src/agentscope/tool/_utils.py ...
-INFO | smoke_internal:feed:172 - [259] 答复文本: 30
-INFO | smoke_internal:feed:213 - [261] == 回复结束: completed
-INFO | smoke_internal:main:235 - 共 261 个事件；工具调用 1 次 ['Glob']
+INFO | smoke_internal:feed:189 - [013] >> 调用工具 Glob
+INFO | smoke_internal:feed:196 - [056]    参数 "{\"pattern\": \"**/*.py\", \"path\": \".../src/agentscope/tool\"}"
+INFO | smoke_internal:feed:208 - [070] << 工具结果 {"state": "success", "chars": 2386, "output": ".../_utils.py\n.../_types.py\n...（共 30 行）"}
+INFO | smoke_internal:feed:180 - [264] 答复文本 "30"
+INFO | smoke_internal:feed:211 - [265] -- 本轮结束 {"in": 2889, "out": 190, "cache": 1920, "reason": "completed"}
+INFO | smoke_internal:feed:223 - [266] == 回复结束 "completed"
+INFO | smoke_internal:main:245 - 共 266 个事件；工具调用 1 次 ['Glob']
 ```
 
 参考实现：`study/smoke_internal.py` —— **开箱即用，不需要 export 任何环境变量**：
