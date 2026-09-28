@@ -84,7 +84,83 @@ ReplyStart → HintBlock → ModelCallStart
 
 **两次 `ModelCallStart` = ReAct 两轮**。`Msg` 只在最后出现，它终止流。
 
-## 2.5 工具与批处理（对写自有工具最关键）
+## 2.5 三类内容载体：prompt / hint / thinking
+
+同一个 `Msg` 里可能同时出现 `hint` 与 `thinking` 两种 block，而 system prompt 并不在其中 —— 三者最容易混。一句话区分：
+
+- **prompt** —— 构造时定死的**输入**（`role: system`）
+- **hint** —— 运行时按需注入的**输入**，到 API 时转成 `role: user`
+- **thinking** —— 模型吐出的**输出**，且**不回传**给模型
+
+### 方向与角色对照
+
+| | hint | thinking | prompt |
+|---|---|---|---|
+| 方向 | 框架 → 模型 | 模型 → 框架/用户 | 宿主 → 模型 |
+| 到 API 时 | 转成 `role: user`（`formatter/_openai_formatter.py:303-327`） | **被跳过**（`:391-393`） | `role: system` |
+| 生成者 | 框架 / 中间件 / 工具 | 模型自身 | 开发者 |
+| 流式形态 | 一次性全文，无 delta | 逐 token `delta` | — |
+| 是否长留上下文 | 是，且**参与后续所有请求** | 留在 `Msg` 里供渲染/存档，但**不回传** | 是，常驻 |
+
+`_openai_formatter.py:391-393` 原文说明了 thinking 的处境：
+
+```python
+elif isinstance(block, ThinkingBlock):
+    # OpenAI API does not accept reasoning/thinking content
+    # in conversation history — skip thinking blocks silently.
+```
+
+### hint 是 `Reasoning` 决策的一个字段
+
+```python
+def _next_action(self, final_msg=None) -> Reasoning | Acting | Exit:
+    ...
+    return Reasoning(
+        hint=HintBlock(hint=[TextBlock(text="<system-reminder>...")]),
+        tool_choice=...,
+    )
+```
+
+`_next_action` 决定「这一轮去调模型」时，可以顺带挂一个 hint；循环体随后 `append_context(hint)` 写进上下文，再发起调用。
+
+### 与 system prompt 的分工：为什么不直接改 prompt
+
+`_inject_runtime_state` 的 docstring 把关卡写死了：
+
+> We attach a HintBlock instead of mutating the system prompt, **so that prompt caching still works** while the agent remains aware of the changing time / tasks / context.
+>
+> Only information that *changes* within a conversation is injected here. **Fixed information should live in the system prompt.**
+
+| | system prompt | hint |
+|---|---|---|
+| 装什么 | **不变的**：人设、总则、技能说明 | **会变的**：当前时间、任务状态、上下文余量、工具连续失败 |
+| 什么时候给 | 构造时一次 | 运行时按条件注入（每轮可选） |
+| API 角色 | `system` | `user` |
+| 缓存影响 | 稳定 → prompt cache 可命中 | 追加在对话尾部，**不污染 system**，缓存照旧命中 |
+
+一句话：**改 system prompt 会废掉整段前缀的缓存，所以「会变的」一律走 hint。**
+
+### 谁在造 hint
+
+| 触发 | 位置 | 注入内容 |
+|---|---|---|
+| 达到 `max_iters` | `agent/_agent.py:3700` | 「总结并给最终答案，别调工具」 |
+| 要求结构化输出 | `agent/_agent.py:3630` | 「调用生成工具产出结构化结果」 |
+| 运行时状态 | `_inject_runtime_state`（`agent/_agent.py:1610`） | 时间 / 任务 / 上下文余量 / 工具连续失败 |
+| 上下文压缩 | `agent/_agent.py:877` | 被移除图片的替代说明 |
+| 中间件 | `middleware/_rag.py:989`、`middleware/_budget.py:180`、长期记忆 | 检索结果、预算告警、记忆召回 |
+| 服务层 | team / inbox / tool_offload / scheduler / IM 网关 | 团队消息、收件箱、工具卸载、定时唤醒 |
+
+### 为什么 hint 要独立成一个 block 类型
+
+既然最终都变成 user 消息，为何不直接 append 一条 user `Msg`：
+
+1. `source` 字段标明「这不是用户说的」；
+2. 事件流里 `HintBlockEvent` 与真实用户输入天然可区分 —— 它是**无 delta 的一次性事件**（`message/_base.py:376` 注释：「One-shot event」）；
+3. 前端可单独渲染（灰底提示条 vs 用户气泡）；
+4. `InjectionConfig.emit_hint_event` 一个开关控制是否对外发事件。
+
+## 2.6 工具与批处理（对写自有工具最关键）
 
 `_batch_tool_calls`（`:2088`）按工具的 `is_concurrency_safe` 分批：
 
@@ -102,7 +178,7 @@ ReplyStart → HintBlock → ModelCallStart
 工具执行的链路：`_execute_tool_call`（`:2423`，权限检查）→ `_acting`（`:2711`，`on_acting` 中间件）
 → `_acting_impl`（`:2765`，`toolkit.call_tool`）。
 
-## 2.6 中间件：洋葱 + 可"续命"循环
+## 2.7 中间件：洋葱 + 可"续命"循环
 
 七类钩子：`on_reply` / `on_reasoning` / `on_acting` / `on_model_call` /
 `on_check_permission` / `on_compress_context` / `on_system_prompt`。
@@ -112,7 +188,7 @@ Agent 构造时按实现的钩子筛选（`agent/_agent.py:206` 起）。
 中间件只要**收到但不 yield** 这个事件，标志保持 False → 主循环拒绝退出、强制再来一轮。
 配套 `made_progress`（`:1129`）防忙循环：连续吞两次且中间没有推理/执行 → `RuntimeError`。
 
-## 2.7 状态与上下文
+## 2.8 状态与上下文
 
 | 对象 | 位置 | 作用 |
 |---|---|---|
@@ -124,7 +200,7 @@ Agent 构造时按实现的钩子筛选（`agent/_agent.py:206` 起）。
 上下文自我管理都在循环里：**压缩（`compress_context`）发生在推理之前**（`:1179`），
 之后是运行时状态注入（时间 / 任务 / 上下文用量）。
 
-## 2.8 人在环（HITL）
+## 2.9 人在环（HITL）
 
 停泊 → 续传是完整闭环：
 
@@ -137,21 +213,21 @@ Agent 构造时按实现的钩子筛选（`agent/_agent.py:206` 起）。
 
 `UserInterruptEvent` 短路（`:1079`）：只有真存在 awaiting 工具调用时才收尾，否则是无害 no-op。
 
-## 2.9 结构化输出
+## 2.10 结构化输出
 
 按需挂载：每次回复先 `remove_tool(_GenerateStructuredOutput)`，若有 schema 再 add 一个
 带 schema 的新实例（`:1115`）。`_next_action` 里若"要求了但没满足"，就注入一条
 `<system-reminder>` 提示模型调用它；超出 `max_iters + structured_output_grace_iters`
 则结束并报 `EXCEED_MAX_ITERS`。
 
-## 2.10 `max_iters` 的真实语义
+## 2.11 `max_iters` 的真实语义
 
 **不是"最多推理 N 次"**，而是"第 N 次进入时**强制一次不许调工具**的收尾调用"
 （`:3712`，`tool_choice=ToolChoice(mode="none")`）。
 
 所以正常流程 `final_msg` 出现在 `cur_iter == max_iters + 1`；判超限用的才是 `>`。
 
-## 2.11 可替换性：最小协议
+## 2.12 可替换性：最小协议
 
 `PipelineProtocol`（`pipeline/_base.py:11`）**只有一个方法**：
 
@@ -162,7 +238,7 @@ def reply_stream(self, inputs) -> AsyncGenerator[AgentEvent | Msg, None]
 任何满足它的东西都能顶替 `Agent` —— `GoalPipeline`、`A2AAgent` 都是这么做的。
 这是整个框架可组合性的地基。
 
-## 2.12 代码地图
+## 2.13 代码地图
 
 | 想找 | 去哪 |
 |---|---|
