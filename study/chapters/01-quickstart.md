@@ -160,9 +160,12 @@ logger.info("共 %d 个事件", n)
 - 日志级别用标准字符串：`"INFO"` / `"DEBUG"` / `"WARNING"` / `"ERROR"` / `"CRITICAL"`。
 - 想看框架自身的 DEBUG 细节，把级别调到 `"DEBUG"` 即可 —— 你的日志和它的日志同一个通道。
 
-参考实现：`study/smoke_internal.py`（已经是 logger 版，可用 `AS_LOG_LEVEL=DEBUG` 覆盖级别）。
+参考实现：`study/smoke_internal.py` —— **开箱即用，不需要 export 任何环境变量**：
+token 默认从 `_config/.auth` 读、`trust_env=False` 兜住代理、
+连解释器都会自动切到仓库的 `.venv`。直接 `python3 study/smoke_internal.py` 即可，
+级别用 `AS_LOG_LEVEL=DEBUG` 覆盖。
 
-一次成功的回复长这样（**两次实测分别为 48 / 332 个事件**，差异全部落在 `ThinkingBlockDeltaEvent` 上 —— 推理长度不固定；结构始终是 2 轮循环 + 1 次 Glob。此处省略时间戳前缀）：
+一次成功的回复长这样（**某次实测**；此处省略时间戳前缀）：
 
 ```text
 INFO | smoke_internal:main:62 - [001] ReplyStartEvent
@@ -178,9 +181,24 @@ INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
 
 **两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，前端不用自己收尾。
 
-> ⚠️ **事件总数不是常量**：它随模型的思考长度变化（同一 prompt 两次实测为 48 与 332）。
-> 可依赖的是**结构** —— 轮次、块级事件的成对性、工具调用事件的位置 —— 而不是条数。
-> 任何按「第 N 个事件」写死的消费逻辑都会碎。
+> ⚠️ **只有结构是常量，条数不是。** 同一个 prompt 连续实测四次：
+>
+> | 事件总数 | 精确统计到的轮次 / 工具调用 |
+> |---|---|
+> | 48 | 2 轮 / 1 次 Glob |
+> | 80 | 2 轮 / 1 次 Glob |
+> | 332 | 2 轮 / 1 次 Glob |
+> | 511 | 工具调用 3 次（事件数说明轮次也更多） |
+>
+> 条数差异几乎全在 `ThinkingBlockDeltaEvent` 与 `ToolCallDeltaEvent` —— 模型把思考与输出
+> 切成多少个分片是不固定的。**可以依赖的不变量只有这些**：
+>
+> 1. `ReplyStartEvent` 一定是第一个，`ReplyEndEvent` 一定是最后一个；
+> 2. 块级事件严格成对：`*Start` → `*Delta*` → `*End`；
+> 3. 工具调用/结果事件排在它所属那轮的 `ModelCallStart…ModelCallEnd` 之内或之后；
+> 4. `HintBlockEvent` 出现在工具结果之后、下一轮模型调用之前（工具结果回灌的标记）。
+>
+> **任何按「第 N 个事件」或「事件总数」写死的消费逻辑都会碎。**
 
 ## 1.6 踩坑清单（都是实际撞到的）
 
