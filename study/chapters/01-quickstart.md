@@ -131,34 +131,53 @@ model = OpenAIChatModel(
 等价于 curl 的 `--noproxy '*'`。**同一个进程里要同时访问外网模型和内网端点时，这是正解**
 —— 全局 `unset` 只能二选一，而它按模型实例生效。
 
-## 1.5 观测：把事件流打出来
+## 1.5 观测：用 logger 记录事件流
 
-学框架最快的方式是**把事件全打出来**。参考 `study/smoke_internal.py`：
+框架自带 logger（就是它自己打日志用的那个）。比 `print` 好在：**可分级、可落盘、每条都带出处**
+（默认格式里含 `模块:函数:行号`）。
 
 ```python
+from agentscope import logger, setup_logger
+
+# 可选：调级别、并同时落文件。
+# 注意它会【清空已有 handler】再重建，所以全进程只调一次，别放进循环。
+setup_logger("DEBUG", filepath="./run.log")
+
 n = 0
 async for evt in agent.reply_stream(UserMsg(name="user", content=PROMPT)):
     n += 1
-    print("[%03d] %s" % (n, type(evt).__name__))
+    logger.info("[%03d] %s", n, type(evt).__name__)
+logger.info("共 %d 个事件", n)
 ```
 
-一次成功的回复长这样（实测 48 事件 / 2 轮循环 / 1 次 Glob）：
+要点：
 
-```
-[001] ReplyStartEvent
-[002] HintBlockEvent
-[003] ModelCallStartEvent          ← 第 1 轮
-[004..016] ThinkingBlock/TextBlock 增量
-[017] ToolCallStartEvent  tool=Glob
-[040] ToolResultStartEvent tool=Glob
-[041] HintBlockEvent               ← 工具结果回灌
-[042] ModelCallStartEvent          ← 第 2 轮
-[046] TextBlockEndEvent  delta='30'
-[047] ModelCallEndEvent
-[048] ReplyEndEvent                ← Msg 终结流
+- `agentscope.logger` 就是 `logging.getLogger("as")`；**import 时已自动 `setup_logger("INFO")`**，
+  所以不配置也能直接用。
+- `setup_logger` 会 `handlers.clear()` 后重建，并设 `propagate = False`（不冒泡到 root logger）。
+  → **全进程只调一次**。
+- 默认格式：`时间 | 级别 | 模块:函数:行号 - 消息`；输出走 stderr（`StreamHandler` 默认）。
+- 日志级别用标准字符串：`"INFO"` / `"DEBUG"` / `"WARNING"` / `"ERROR"` / `"CRITICAL"`。
+- 想看框架自身的 DEBUG 细节，把级别调到 `"DEBUG"` 即可 —— 你的日志和它的日志同一个通道。
+
+参考实现：`study/smoke_internal.py`（已经是 logger 版，可用 `AS_LOG_LEVEL=DEBUG` 覆盖级别）。
+
+一次成功的回复长这样（实测 48 事件 / 2 轮循环 / 1 次 Glob，此处省略时间戳前缀）：
+
+```text
+INFO | smoke_internal:main:62 - [001] ReplyStartEvent
+INFO | smoke_internal:main:62 - [002] HintBlockEvent
+INFO | smoke_internal:main:62 - [003] ModelCallStartEvent     ← 第 1 轮
+INFO | smoke_internal:main:62 - [017] ToolCallStartEvent  tool=Glob
+INFO | smoke_internal:main:62 - [040] ToolResultStartEvent  tool=Glob
+INFO | smoke_internal:main:62 - [041] HintBlockEvent          ← 工具结果回灌
+INFO | smoke_internal:main:62 - [042] ModelCallStartEvent     ← 第 2 轮
+INFO | smoke_internal:main:62 - [048] ReplyEndEvent           ← Msg 终结流
+INFO | smoke_internal:main:66 - 共 48 个事件；工具事件=['Glob', 'Glob']
 ```
 
-**两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，前端不用自己收尾。
+**两次 `ModelCallStartEvent` = ReAct 的两轮**。`*Start/Delta/End` 严格成对，
+前端不用自己收尾。
 
 ## 1.6 踩坑清单（都是实际撞到的）
 
