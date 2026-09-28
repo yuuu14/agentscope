@@ -45,3 +45,38 @@ export HTTPS_PROXY=http://127.0.0.1:7892 HTTP_PROXY=http://127.0.0.1:7892 ALL_PR
 
 真实模型 + 工具调用 + 事件流跑通：`glm-5.3` 一次回复 300 个事件，2 轮 ReAct，1 次 `Glob` 调用。
 细节见 `memory/2026-09-28.md`（workspace 内）。
+
+## Web UI（examples/web_ui）
+
+仓库自带一套 Web UI（`examples/web_ui`，Vite + React 19 + Tailwind）。注意它的
+`backend/` 只是 **16 行占位 stub**（仅 `/api/health`），真正的后端是 Python 的
+`agentscope.app`。
+
+本目录提供 **`app_internal.py`** —— 去掉 Redis / Qdrant / IM 通道的最小服务。
+
+```bash
+# 1) 装 app 层依赖（只需一次；外网 PyPI 要走代理）
+HTTPS_PROXY=http://127.0.0.1:7892 uv pip install -e ".[service,storage-sql]" aiosqlite
+
+# 2) 起后端（SQLite + 自动建表，无需 Redis / alembic）
+python3 study/app_internal.py                 # → http://127.0.0.1:8000
+
+# 3) 起前端（依赖装一次即可）
+cd examples/web_ui
+pnpm install --registry https://registry.npmmirror.com
+pnpm --filter frontend exec vite --host 127.0.0.1 --port 5173
+
+# 4) 浏览器打开 5173 → /setup 填服务地址 http://127.0.0.1:8000
+#    → Credential 页新建「OpenAI 兼容」凭据 → 建会话开始聊天
+```
+
+凭据参数：
+
+| 项 | 值 |
+|---|---|
+| base_url | `http://10.48.3.23:48080/gpu-wrap-server` |
+| 模型 | `deepseek-v4-flash` |
+| 密钥 | 见 `_config/.auth` 的 `GPU_WRAP_SERVER_API_KEY_TEST`（脚本不打印密钥） |
+
+实测：最小服务启动成功，67 条路由（`/credential`、`/chat`、`/agent`、`/health` …），
+CORS 预检返回 `access-control-allow-origin: *`。
