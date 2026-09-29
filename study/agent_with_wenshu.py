@@ -73,6 +73,7 @@ AUTH_FILE = Path(
 AUTH_VAR = "GPU_WRAP_SERVER_" + "API" + "_KEY_TEST"
 
 DEFAULT_QUESTION = "2026年每个月的销售收入是多少？"
+SKILL_DIR = STUDY / "skills" / "wenshu-data-query"
 
 
 def _read_token() -> str:
@@ -175,10 +176,18 @@ async def main() -> None:
     """Run one question through the agent."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument(
+        "--with-skill",
+        action="store_true",
+        help="同时挂载 SKILL.md（对照 tool vs skill）",
+    )
     args = parser.parse_args()
 
     setup_logger(os.environ.get("AS_LOG_LEVEL", "INFO"))
-    logger.info("模型=%s | 工具=wenshu_query | 问题=%s", MODEL, args.question)
+    logger.info(
+        "模型=%s | 工具=wenshu_query | 技能=%s | 问题=%s",
+        MODEL, "开" if args.with_skill else "关", args.question,
+    )
 
     agent = Agent(
         name="Friday",
@@ -187,7 +196,12 @@ async def main() -> None:
             "必须调用 wenshu_query 工具取数后再回答；不要凭记忆编造数字。"
         ),
         model=OpenAIChatModel(**_model_kwargs()),
-        toolkit=Toolkit(tools=[WenshuQueryTool()]),
+        toolkit=Toolkit(
+            tools=[WenshuQueryTool()],
+            # 技能：只把 name/description/dir 摘要注入 system prompt，
+            # 全文由模型调用 Skill 工具按需读取（见第 2 章 §2.5）
+            skills_or_loaders=[str(SKILL_DIR)] if args.with_skill else None,
+        ),
     )
 
     tracer = Tracer(verbose=os.environ.get("AS_LOG_FULL") == "1")
