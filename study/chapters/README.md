@@ -6,6 +6,7 @@
 |---|---|---|
 | 1 | [快速上手](01-quickstart.md) | 环境、最小 Agent、换端点（含跨内外网的代理控制）、观测事件流、踩坑清单 |
 | 2 | [框架机制](02-framework-mechanisms.md) | 四层架构、六个抽象、三态主循环、事件系统、工具批处理、中间件、状态、HITL、`max_iters`、可替换性 |
+| 3 | [接自有工具](03-custom-tool.md) | 包 API vs 包 pipeline 的取舍、`ToolBase` 契约、scope→平台配置→cbb 全链路、三个实测坑 |
 
 ## 配套材料（`study/` 根目录）
 
@@ -15,10 +16,10 @@
 - `images/agentscope-agent-flow.html` —— Agent 执行流程图（矢量源；PNG 由 `render-flow.sh` 生成）
 - `smoke_internal.py` —— 打全事件流的冒烟脚本（内网端点）
 - `console_internal.py` —— 交互式终端 console（内网端点，开箱即用）
+- `wenshu_tool.py` / `agent_with_wenshu.py` —— 第 3 章的自有工具与其 agent 接入
 
 ## 尚未成章（计划）
 
-- 第 3 章：接自有工具（`ToolBase` / `FunctionTool` / `Toolkit` + 权限声明）
 - 第 4 章：服务化（`app/` 多租户、会话、存储）
 - 第 5 章：IM 通道接入（`DingTalkChannel` 为模板）
 - 第 6 章：RAG 与长期记忆
