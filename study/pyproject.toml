@@ -1,0 +1,39 @@
+# ============================================================================
+# study/ —— 学习模块（课件 + 验证脚本）
+#
+# 这是**独立项目**，不是 agentscope 包的一部分：
+# - 不修改上游的根 `pyproject.toml` / `uv.lock`；
+# - 通过 path 源复用仓库里的 `agentscope`（editable），因此与内核始终同源；
+# - 只额外引入 Jupyter 系列依赖，供 `study/notebooks/` 的课件使用。
+#
+# 用法：
+#   uv sync --project study                 # 建 study/.venv
+#   uv run --project study jupyter lab      # 起 JupyterLab
+#   uv run --project study jupyter execute study/notebooks/01-*.ipynb
+# ============================================================================
+[project]
+name = "agentscope-study"
+version = "0.0.0"
+description = "AgentScope 2.0 学习课件（notebooks）与配套脚本"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # 复用仓库里的 agentscope（始终与当前 checkout 同源）
+    "agentscope",
+    # ---- Jupyter ----
+    "jupyterlab>=4.4",
+    "ipykernel>=6.29",
+    "ipywidgets>=8.1",
+    "nbformat>=5.10",
+    "nbclient>=0.10",
+    "jupytext>=1.16",
+    # ---- 课件里直接 import 的 ----
+    "httpx",
+]
+
+[tool.uv]
+# 课件不是可发布的包，只是依赖集合
+package = false
+
+[tool.uv.sources]
+agentscope = { path = "..", editable = true }
