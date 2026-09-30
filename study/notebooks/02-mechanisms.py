@@ -17,11 +17,22 @@ if STUDY.name == "notebooks":
     STUDY = STUDY.parent
 sys.path.insert(0, str(STUDY))
 
-from agent_with_wenshu import build_agent  # noqa: E402  若导入失败见下一个 cell
+from agent_with_wenshu import _model_kwargs  # noqa: E402  复用内网模型构造
+from agentscope.agent import Agent  # noqa: E402
+from agentscope.model import OpenAIChatModel  # noqa: E402
+from agentscope.tool import Glob, Grep, Read, Toolkit  # noqa: E402
+
 print("study dir:", STUDY)
 
-# %% [markdown]
-# > 上面的 import 只是为了复用模型构造。若不想依赖脚本，可用第 1 章的 `build_agent` 写法。
+
+def build_agent() -> Agent:
+    """和脚本里一样的装配：内网模型 + 三个只读文件工具。"""
+    return Agent(
+        name="Friday",
+        system_prompt="You're a helpful assistant. Use tools when needed.",
+        model=OpenAIChatModel(**_model_kwargs()),
+        toolkit=Toolkit(tools=[Read(), Glob(), Grep()]),
+    )
 
 # %%
 from agentscope.message import UserMsg
