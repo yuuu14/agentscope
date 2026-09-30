@@ -50,10 +50,33 @@ def read_token() -> str:
     raise RuntimeError(f"{AUTH_FILE} 里没有 {AUTH_VAR}")
 
 
+# notebook 的工作目录是 notebooks/，所以显式算出仓库根，
+# 后面给模型的路径一律用**绝对路径**（相对路径依赖 cwd —— 第 1 章踩坑 #7）。
+HERE = Path.cwd()
+STUDY = HERE.parent if HERE.name == "notebooks" else HERE
+REPO = STUDY.parent
+TOOL_DIR = REPO / "src" / "agentscope" / "tool"
+print("仓库根:", REPO)
+
+
 async def ping() -> None:
-    async with httpx.AsyncClient(trust_env=False, timeout=10) as c:
-        r = await c.get(BASE_URL + "/models", headers={"Authorization": "Bearer " + read_token()})
-    print("HTTP", r.status_code, "|", r.text[:160])
+    """最小 chat 调用：同时验证「端点可达」与「鉴权有效」。
+
+    注意别拿 `/models` 探测 —— 内网网关没实现它（会返回 500），
+    能通的是 `/chat/completions`。
+    """
+    payload = {
+        "model": "deepseek-v4-flash",
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 4,
+    }
+    async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+        r = await c.post(
+            BASE_URL + "/chat/completions",
+            json=payload,
+            headers={"Authorization": "Bearer " + read_token()},
+        )
+    print("HTTP", r.status_code, "|", r.text[:120])
 
 
 await ping()
@@ -136,7 +159,8 @@ async def trace(question: str) -> None:
         print(f"  {k:<28} {v}")
 
 
-await trace("用 Glob 数一下 src/agentscope/tool 下有多少个 .py 文件，只回答数字")
+_Q = f"用 Glob 工具，pattern='**/*.py'，path='{TOOL_DIR}'，只回答一个数字"
+await trace(_Q)
 
 # %% [markdown]
 # ## 4. 小结

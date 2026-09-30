@@ -26,6 +26,10 @@ print("study dir:", STUDY)
 # %%
 from agentscope.message import UserMsg
 
+# 给模型明确 pattern + 绝对 path（含糊的 prompt 会让它反复试探 —— 第 1 章踩坑）
+_REPO = STUDY.parent
+_Q = f"用 Glob 工具，pattern='**/*.py'，path='{_REPO}/src/agentscope/tool'，只回答一个数字"
+
 
 async def count_rounds(question: str) -> dict:
     """数一次回复里经过几轮「推理 → 执行」。"""
@@ -56,7 +60,7 @@ async def count_rounds(question: str) -> dict:
     }
 
 
-_rounds = await count_rounds("用 Glob 数一下 src/agentscope/tool 下有多少 .py 文件，只回答数字")
+_rounds = await count_rounds(_Q)
 print(json.dumps(_rounds, ensure_ascii=False, indent=2))
 
 # %% [markdown]
@@ -93,7 +97,7 @@ async def check_invariants(question: str) -> None:
     print("不变量检查:", "✅ 全部满足" if not violations else f"❌ {violations}")
 
 
-await check_invariants("用 Glob 数一下 src/agentscope/tool 下有多少 .py 文件，只回答数字")
+await check_invariants(_Q)
 
 # %% [markdown]
 # ## 小结
