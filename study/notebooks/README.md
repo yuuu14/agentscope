@@ -44,6 +44,26 @@ Jupyter kernel **本来就有运行中的事件循环**（IPython autoawait）�
 
 （`study/` 下的**脚本**则相反：它们是普通 Python 进程，必须用 `asyncio.run(...)`。）
 
+## 依赖：内网网关 + cbb
+
+课件里的模型调用走**内网 gpu-wrap 网关**，03 还要连 **cbb text-to-metrics**。两者任一不可用时，
+对应 cell 会失败（其余内容仍可阅读）。
+
+实测遇到的失败形态：
+
+- 网关故障 → `500 服务内部错误`，agentscope 会**自动重试 4 次（间隔 1s）**后才抛
+  `InternalServerError`；
+- 网关上游断开 → `503 upstream connect error or disconnect/reset before headers`。
+
+**恢复后重跑即可**：
+
+```bash
+./build.sh 03        # 只重建 03；不带参数则全部
+```
+
+> 状态：01 / 02 已执行并嵌入输出；**03 的代码与脚本等价（脚本侧已验证跑通）**，
+> 但构建当时网关不可用，故 03 未嵌入输出 —— 网关恢复后重跑 `./build.sh 03`。
+
 ## 注意
 
 - 课件会调用**内网**模型端点与 cbb 取数服务；**外网不可用时相关 cell 会失败**，不影响其余内容阅读。
