@@ -25,6 +25,7 @@ uv run --project study jupyter execute study/notebooks/01-quickstart.ipynb
 | `01-quickstart.ipynb` | 第 1 章 | 端点可达性、最小 Agent、事件流内容 |
 | `02-mechanisms.ipynb` | 第 2 章 | 三态循环轮次、事件不变量断言 |
 | `03-custom-tool.ipynb` | 第 3 章 | `WenshuQueryTool` 直调（真实数据） |
+| `04-service.ipynb` | 第 4 章 | 起服务 → HTTP 驱动 → SSE 事件流（**自包含，含收尾停服务**） |
 
 ## 源文件是 `.py`（jupytext percent 格式）
 
@@ -35,6 +36,19 @@ uv run --project study jupytext --to notebook study/notebooks/01-quickstart.py
 ```
 
 改课件请改 `.py`，再转 `.ipynb` —— 直接改 `.ipynb` 的 JSON 既难 diff 也容易冲突。
+
+## 坑：代理可能来自**系统设置**，不只是环境变量
+
+本机（macOS）配了系统级代理（`scutil --proxy`，127.0.0.1:7892）。httpx 在 `trust_env=True`
+（默认）时会读它，把发往内网 `10.x` 的请求丢给代理 → 代理够不到内网 → 挂 ~31s → 502。
+
+**只 `unset` 环境变量不够**（环境里本来就没有），必须显式绕过：
+
+```bash
+export NO_PROXY="10.48.3.23,10.48.2.201,localhost,127.0.0.1"
+```
+
+`build.sh` 已内置这一行；`04-service.ipynb` 起服务时也会把它注入子进程环境。
 
 ## 坑：notebook 里别用 `asyncio.run()`
 

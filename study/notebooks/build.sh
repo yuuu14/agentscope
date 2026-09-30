@@ -12,6 +12,10 @@ cd "$(dirname "$0")"
 # 这样无论被谁调用（shell / CI / nohup）都不会带上代理变量。
 # 客户端侧同时用 httpx 的 trust_env=False 兜底。
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+# 代理可能来自 **macOS 系统设置**（不在环境变量里），仅 unset 不够：
+# 必须把内网主机放进 NO_PROXY，否则默认 trust_env=True 的客户端会走系统代理。
+export NO_PROXY="10.48.3.23,10.48.2.201,localhost,127.0.0.1"
+export no_proxy="$NO_PROXY"
 
 PROJ=..                      # study/ 这个 uv 项目
 prefix="${1:-}"

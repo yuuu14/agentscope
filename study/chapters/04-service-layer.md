@@ -99,6 +99,17 @@ POST /chat/        {agent_id, session_id, input}           → {status:"started"
 | 1 | `GET /sessions/{id}/stream` 返回 **422**（JSON，不是事件流） | 它是**必填 query** `?agent_id=`（用于归属校验），漏了就是校验失败 |
 | 2 | `POST /sessions/` 建会话 422 | `chat_model_config.parameters` 是**必填 dict**，给 `{}` |
 | 3 | 服务起了但一直没事件 | `/chat/` 只在**订阅建立之后**产生事件；先订阅再触发（脚本里 `await asyncio.sleep(1.0)` 就是这个作用） |
+| 4 | 服务路径的模型调用**挂 ~31 秒后 502**，agentscope 重试 4 次全失败 | 应用层建模型时没传 `client_kwargs`（`_service/_model.py`），OpenAI 客户端用默认 httpx → `trust_env=True` → 读到 **macOS 系统代理**（`scutil --proxy`，**不在环境变量里**）→ 把发往 `10.x` 的请求丢给 `127.0.0.1:7892` → 代理够不到内网。给进程注入 `NO_PROXY=10.48.3.23,…` 即可 |
+
+第 4 条值得展开 —— 对照实测（同一网关、同一请求）：
+
+| 客户端 | 耗时 / 结果 |
+|---|---|
+| `trust_env=False` | 0.3s → **200** |
+| `trust_env=True` | **30.9s → 502** |
+| `trust_env=True` + `NO_PROXY=10.48.3.23` | 0.4s → **200** |
+
+所以「内网要 unset 代理」这件事，**光删环境变量不够** —— 系统级代理才是真凶。
 
 ## 4.7 与单机 Agent 的关系
 
