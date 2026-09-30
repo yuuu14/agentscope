@@ -17,7 +17,7 @@
 - `images/agentscope-agent-flow.html` —— Agent 执行流程图（矢量源；PNG 由 `render-flow.sh` 生成）
 - `smoke_internal.py` —— 打全事件流的冒烟脚本（内网端点）
 - `console_internal.py` —— 交互式终端 console（内网端点，开箱即用）
-- `wenshu_tool.py` / `agent_with_wenshu.py` —— 第 3 章的自有工具与其 agent 接入
+- `tools/wenshu_tool.py` / `agent_with_wenshu.py` —— 第 3 章的自有工具与其 agent 接入
 - `app_client_demo.py` —— 第 4 章的 HTTP 驱动脚本（配合 `app_internal.py`）
 
 ## 尚未成章（计划）

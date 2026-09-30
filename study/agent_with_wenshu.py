@@ -3,7 +3,7 @@
 """第 3 章 · 把自有工具接进 AgentScope Agent。
 
 - 模型：内网 gpu-wrap / ``deepseek-v4-flash``（`trust_env=False` 强制直连）
-- 工具：`study/wenshu_tool.py` 的 `WenshuQueryTool`（hgt-2 问数，封装 cbb）
+- 工具：`study/tools/wenshu_tool.py` 的 `WenshuQueryTool`（hgt-2 问数，封装 cbb）
 - 目标：**模型自己决定**何时调工具、选哪个 scope，而不是由人写死分支
 
 开箱即用：解释器缺依赖会自动切到仓库 `.venv`；鉴权默认读 `_config/.auth`。
@@ -44,7 +44,7 @@ def _ensure_deps() -> None:
 
 _ensure_deps()
 
-if str(STUDY) not in sys.path:                      # 导入同目录的 wenshu_tool
+if str(STUDY) not in sys.path:                      # 让 tools/ 可被导入
     sys.path.insert(0, str(STUDY))
 
 import argparse  # noqa: E402
@@ -60,7 +60,7 @@ from agentscope.message import UserMsg  # noqa: E402
 from agentscope.model import OpenAIChatModel  # noqa: E402
 from agentscope.tool import Toolkit  # noqa: E402
 
-from wenshu_tool import WenshuQueryTool  # noqa: E402
+from tools.wenshu_tool import WenshuQueryTool  # noqa: E402
 
 BASE_URL = os.environ.get("AS_BASE_URL", "http://10.48.3.23:48080/gpu-wrap-server")
 MODEL = os.environ.get("AS_MODEL", "deepseek-v4-flash")

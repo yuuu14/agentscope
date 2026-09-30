@@ -165,11 +165,11 @@ scope=customer  query=客户总数是多少
 
 | 文件 | 作用 |
 |---|---|
-| `study/wenshu_tool.py` | `WenshuQueryTool(ToolBase)`：scope → 配置 → cbb，返回可读文本 |
+| `study/tools/wenshu_tool.py` | `WenshuQueryTool(ToolBase)`：scope → 配置 → cbb，返回可读文本 |
 | `study/agent_with_wenshu.py` | 把工具接进 `Agent`（内网模型），跑一次真实问答 |
 
 ```bash
-python3 study/wenshu_tool.py                       # 直调工具，验证链路
+python3 study/tools/wenshu_tool.py                 # 直调工具，验证链路
 python3 study/agent_with_wenshu.py                 # 让模型自己调
 python3 study/agent_with_wenshu.py --question "客户总数是多少"
 ```

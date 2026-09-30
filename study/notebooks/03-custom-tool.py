@@ -16,7 +16,7 @@ if STUDY.name == "notebooks":
 if str(STUDY) not in sys.path:
     sys.path.insert(0, str(STUDY))
 
-from wenshu_tool import SCOPE_TO_SCENE, WenshuQueryTool  # noqa: E402
+from tools.wenshu_tool import SCOPE_TO_SCENE, WenshuQueryTool  # noqa: E402
 
 print("工具名 :", WenshuQueryTool.name)
 print("只读   :", WenshuQueryTool.is_read_only, "| 可并发:", WenshuQueryTool.is_concurrency_safe)
