@@ -8,6 +8,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# 内网模型网关与 cbb 取数都必须**绕过代理**：在脚本内部 unset，
+# 这样无论被谁调用（shell / CI / nohup）都不会带上代理变量。
+# 客户端侧同时用 httpx 的 trust_env=False 兜底。
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+
 PROJ=..                      # study/ 这个 uv 项目
 prefix="${1:-}"
 
