@@ -71,13 +71,18 @@ async def run_agent(question: str, with_skill: bool = False) -> None:
         ),
     )
     calls: list[tuple[str, str]] = []
+    buf: dict[str, list[str]] = {}      # delta 是片段 → 按 block_id 累积
     answer = ""
     async for evt in agent.reply_stream(UserMsg(name="user", content=question)):
         kind = type(evt).__name__
         if kind == "ToolCallStartEvent":
             calls.append((evt.tool_call_name, evt.tool_call_id))
-        elif kind == "TextBlockEndEvent" and getattr(evt, "text", None):
-            answer = evt.text
+        elif kind == "TextBlockDeltaEvent":
+            buf.setdefault(evt.block_id, []).append(evt.delta)
+        elif kind == "TextBlockEndEvent":
+            # EndEvent 有时不带现成全文，所以要回退到累积值
+            # （第 1 章第一条规则 —— 别只读 evt.text）
+            answer = getattr(evt, "text", None) or "".join(buf.get(evt.block_id, []))
 
     print("技能:", "开" if with_skill else "关")
     print("工具调用序列:", [c[0] for c in calls])
